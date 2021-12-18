@@ -60,7 +60,9 @@ ___
 #### 1 Preparing data
 
 1. Make train and test filelists of your audio data like ones included into `filelists` folder.
-2. Make a configuration file* in `configs` folder.
+
+Change the dataset path on `train_test_tool.py` and run it to generate a test/train split of your dataset. 
+1. Make a configuration file* in `configs` folder.
 
 ***Note:** if you are going to change `hop_length` for STFT, then make sure that the product of your upsampling `factors` in config is equal to your new `hop_length`.
 
