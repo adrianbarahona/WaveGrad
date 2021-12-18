@@ -28,6 +28,8 @@ if __name__ == '__main__':
     OUT_PATH = 'filelists'
     
     audiofile_paths = get_train_test(DATASET_PATH)
+    if os.path.exists(OUT_PATH) == False:
+        os.makedirs(OUT_PATH)
     #Randomise to get random train/test split
     random.shuffle(audiofile_paths)
     total_files = len(audiofile_paths)
