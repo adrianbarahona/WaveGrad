@@ -23,7 +23,7 @@
         "hop_length": 300,
         "f_min": 40.0,
         "f_max": 20000,
-        "n_mels": 160
+        "n_mels": 120
     },
     "training_config": {
         "logdir": "logs/default",
