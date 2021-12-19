@@ -6,12 +6,12 @@ from model.base import BaseModule
 from model.layers import Conv1dWithInitialization
 
 
-LINEAR_SCALE=5000
+# LINEAR_SCALE=5000
 
 
 class PositionalEncoding(BaseModule):
     def __init__(self, n_channels):
-        super(PositionalEncoding, self).__init__()
+        super().__init__()
         self.n_channels = n_channels
 
     def forward(self, noise_level):
@@ -20,13 +20,13 @@ class PositionalEncoding(BaseModule):
         half_dim = self.n_channels // 2
         exponents = torch.arange(half_dim, dtype=torch.float32).to(noise_level) / float(half_dim)
         exponents = 1e-4 ** exponents
-        exponents = LINEAR_SCALE * noise_level.unsqueeze(1) * exponents.unsqueeze(0)
+        exponents = 5000 * noise_level.unsqueeze(1) * exponents.unsqueeze(0)
         return torch.cat([exponents.sin(), exponents.cos()], dim=-1)
 
 
 class FeatureWiseLinearModulation(BaseModule):
     def __init__(self, in_channels, out_channels, input_dscaled_by):
-        super(FeatureWiseLinearModulation, self).__init__()
+        super().__init__()
         self.signal_conv = torch.nn.Sequential(*[
             Conv1dWithInitialization(
                 in_channels=in_channels,

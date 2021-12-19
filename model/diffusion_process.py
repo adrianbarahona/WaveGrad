@@ -4,9 +4,9 @@ import torch
 
 from model.base import BaseModule
 from model.nn import WaveGradNN
+import warnings
 
-
-class WaveGrad(BaseModule):
+class WaveGrad(torch.nn.Module):
     """
     WaveGrad diffusion process as described in WaveGrad paper
     (link: https://arxiv.org/pdf/2009.00713.pdf).
@@ -14,40 +14,27 @@ class WaveGrad(BaseModule):
     repository (link: https://github.com/hojonathanho/diffusion,
     paper: https://arxiv.org/pdf/2006.11239.pdf).
     """
-    def __init__(self, config):
-        super(WaveGrad, self).__init__()
+    def __init__(self):
+        super().__init__()
         # Setup noise schedule
         self.noise_schedule_is_set = False
 
         # Backbone neural network to model noise
-        self.total_factor = np.product(config.model_config.factors)
-        assert self.total_factor == config.data_config.hop_length, \
-            """Total factor-product should be equal to the hop length of STFT."""
-        self.nn = WaveGradNN(config)
+        
+        self.total_factor = int(np.product([5, 5, 3, 2, 2]))
+        # assert self.total_factor == 300, \
+            # """Total factor-product should be equal to the hop length of STFT."""
+        self.nn = WaveGradNN()
 
-    def set_new_noise_schedule(
-        self,
-        init=torch.linspace,
-        init_kwargs={'steps': 50, 'start': 1e-6, 'end': 1e-2}
-    ):
-        """
-        Sets sampling noise schedule. Authors in the paper showed
-        that WaveGrad supports variable noise schedules during inference.
-        Thanks to the continuous noise level conditioning.
-        :param init (callable function, optional): function which initializes betas
-        :param init_kwargs (dict, optional): dict of arguments to be pushed to `init` function.
-            Should always contain the key `steps` corresponding to the number of iterations to be done by the model.
-            This is done so because `torch.linspace` has this argument named as `steps`.
-        """
-        assert 'steps' in list(init_kwargs.keys()), \
-            '`init_kwargs` should always contain the key `steps` corresponding to the number of iterations to be done by the model.'
-        n_iter = init_kwargs['steps']
+        self.dummy_param = torch.nn.Parameter(torch.empty(0))
 
-        betas = init(**init_kwargs)
+        n_iter = 50
+
+        betas = torch.linspace(steps=50, start=1e-6, end=1e-2)
         alphas = 1 - betas
         alphas_cumprod = alphas.cumprod(dim=0)
-        alphas_cumprod_prev = torch.cat([torch.FloatTensor([1]), alphas_cumprod[:-1]])
-        alphas_cumprod_prev_with_last = torch.cat([torch.FloatTensor([1]), alphas_cumprod])
+        alphas_cumprod_prev = torch.cat([torch.tensor([1]), alphas_cumprod[:-1]])
+        alphas_cumprod_prev_with_last = torch.cat([torch.tensor([1]), alphas_cumprod])
         self.register_buffer('betas', betas)
         self.register_buffer('alphas', alphas)
         self.register_buffer('alphas_cumprod', alphas_cumprod)
@@ -56,7 +43,7 @@ class WaveGrad(BaseModule):
         # Calculations for posterior q(y_n|y_0)
         sqrt_alphas_cumprod = alphas_cumprod.sqrt()
         # For WaveGrad special continuous noise level conditioning
-        self.sqrt_alphas_cumprod_prev = alphas_cumprod_prev_with_last.sqrt().numpy()
+        self.sqrt_alphas_cumprod_prev = alphas_cumprod_prev_with_last.sqrt()
         sqrt_recip_alphas_cumprod = (1 / alphas_cumprod).sqrt()
         sqrt_alphas_cumprod_m1 = (1 - alphas_cumprod).sqrt() * sqrt_recip_alphas_cumprod
         self.register_buffer('sqrt_alphas_cumprod', sqrt_alphas_cumprod)
@@ -75,8 +62,17 @@ class WaveGrad(BaseModule):
         self.register_buffer('posterior_mean_coef2', posterior_mean_coef2)
         
         self.n_iter = n_iter
-        self.noise_schedule_kwargs = {'init': init, 'init_kwargs': init_kwargs}
+        self.noise_schedule_kwargs = {'init': torch.linspace, 'init_kwargs': {'steps': 50, 'start': 1e-6, 'end': 1e-2}}
         self.noise_schedule_is_set = True
+        warnings.warn(
+            'this is running'
+        )
+    def set_new_noise_schedule(
+        self,
+        init=torch.linspace,
+        init_kwargs={'steps': 50, 'start': 1e-6, 'end': 1e-2}
+    ):
+        pass
 
     def sample_continuous_noise_level(self, batch_size, device):
         """
@@ -109,7 +105,7 @@ class WaveGrad(BaseModule):
         outputs = continuous_sqrt_alpha_cumprod * y_0 + (1 - continuous_sqrt_alpha_cumprod**2).sqrt() * eps
         return outputs
 
-    def q_posterior(self, y_start, y, t):
+    def q_posterior(self, y_start, y, t:int):
         """
         Computes reverse (denoising) process posterior q(y_{t-1}|y_0, y_t, x)
         parameters: mean and variance.
@@ -118,7 +114,7 @@ class WaveGrad(BaseModule):
         posterior_log_variance_clipped = self.posterior_log_variance_clipped[t]
         return posterior_mean, posterior_log_variance_clipped
 
-    def predict_start_from_noise(self, y, t, eps):
+    def predict_start_from_noise(self, y, t:int, eps):
         """
         Computes y_0 from given y_t and reconstructed noise.
         Is needed to reconstruct the reverse (denoising)
@@ -126,13 +122,13 @@ class WaveGrad(BaseModule):
         """
         return self.sqrt_recip_alphas_cumprod[t] * y - self.sqrt_alphas_cumprod_m1[t] * eps
 
-    def p_mean_variance(self, mels, y, t, clip_denoised: bool):
+    def p_mean_variance(self, mels, y, t:int, clip_denoised: bool):
         """
         Computes Gaussian transitions of Markov chain at step t
         for further computation of y_{t-1} given current state y_t and features.
         """
         batch_size = mels.shape[0]
-        noise_level = torch.FloatTensor([self.sqrt_alphas_cumprod_prev[t+1]]).repeat(batch_size, 1).to(mels)
+        noise_level = self.sqrt_alphas_cumprod_prev[t+1].repeat(batch_size, 1).to(mels)
         eps_recon = self.nn(mels, y, noise_level)
         y_recon = self.predict_start_from_noise(y, t, eps_recon)
 
@@ -142,7 +138,7 @@ class WaveGrad(BaseModule):
         model_mean, posterior_log_variance = self.q_posterior(y_start=y_recon, y=y, t=t)
         return model_mean, posterior_log_variance
 
-    def compute_inverse_dynamics(self, mels, y, t, clip_denoised=True):
+    def compute_inverse_dynamics(self, mels, y, t: int, clip_denoised :bool = True):
         """
         Computes reverse (denoising) process dynamics. Closely related to the idea of Langevin dynamics.
         :param mels (torch.Tensor): mel-spectrograms acoustic features of shape [B, n_mels, T//hop_length]
@@ -154,7 +150,7 @@ class WaveGrad(BaseModule):
         eps = torch.randn_like(y) if t > 0 else torch.zeros_like(y)
         return model_mean + eps * (0.5 * model_log_variance).exp()
 
-    def sample(self, mels, store_intermediate_states=False):
+    def sample(self, mels, store_intermediate_states:bool=False):
         """
         Samples speech waveform via progressive denoising of white noise with guidance of mels-epctrogram.
         :param mels (torch.Tensor): mel-spectrograms acoustic features of shape [B, n_mels, T//hop_length]
@@ -163,15 +159,15 @@ class WaveGrad(BaseModule):
             or y_0 (torch.Tensor): predicted signals on every dynamics iteration of shape [B, T]
         """
         with torch.no_grad():
-            device = next(self.parameters()).device
+            device = self.dummy_param.device
             batch_size, T = mels.shape[0], mels.shape[-1]
             ys = [torch.randn(batch_size, T*self.total_factor, dtype=torch.float32).to(device)]
-            t = self.n_iter - 1
+            t = int(self.n_iter - 1)
             while t >= 0:
                 y_t = self.compute_inverse_dynamics(mels, y=ys[-1], t=t)
                 ys.append(y_t)
                 t -= 1
-            return ys if store_intermediate_states else ys[-1]
+            return ys[-1]
 
     def compute_loss(self, mels, y_0):
         """
@@ -196,7 +192,7 @@ class WaveGrad(BaseModule):
         loss = torch.nn.L1Loss()(eps_recon, eps)
         return loss
 
-    def forward(self, mels, store_intermediate_states=False):
+    def forward(self, mels, store_intermediate_states:bool=False):
         """
         Generates speech from given mel-spectrogram.
         :param mels (torch.Tensor): mel-spectrogram tensor of shape [1, n_mels, T//hop_length]
@@ -204,16 +200,14 @@ class WaveGrad(BaseModule):
             flag to set return tensor to be a set of all states of denoising process 
         """
         self._verify_noise_schedule_existence()
-        
-        return self.sample(
-            mels, store_intermediate_states
-        )
+        return self.sample(mels)
 
     def _verify_noise_schedule_existence(self):
         if not self.noise_schedule_is_set:
-            raise RuntimeError(
-                'No noise schedule is found. Specify your noise schedule '
-                'by pushing arguments into `set_new_noise_schedule(...)` method. '
-                'For example: '
-                "`wavegrad.set_new_noise_level(init=torch.linspace, init_kwargs=\{'steps': 50, 'start': 1e-6, 'end': 1e-2\})`."
-            )
+            warnings.warn('No noise schedule is found. Specify your noise schedule')
+            # raise RuntimeError(
+            #     'No noise schedule is found. Specify your noise schedule '
+            #     'by pushing arguments into `set_new_noise_schedule(...)` method. '
+            #     'For example: '
+            #     "`wavegrad.set_new_noise_level(init=torch.linspace, init_kwargs=\{'steps': 50, 'start': 1e-6, 'end': 1e-2\})`."
+            # )

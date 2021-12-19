@@ -1,3 +1,4 @@
+import json
 import numpy as np
 
 import torch
@@ -7,7 +8,9 @@ from model.layers import Conv1dWithInitialization
 from model.upsampling import UpsamplingBlock as UBlock
 from model.downsampling import DownsamplingBlock as DBlock
 from model.linear_modulation import FeatureWiseLinearModulation as FiLM
-
+from torch import Tensor
+from typing import List, Tuple
+from utils import ConfigWrapper
 
 class WaveGradNN(BaseModule):
     """
@@ -17,9 +20,11 @@ class WaveGradNN(BaseModule):
     The concept is built on the prior work on score matching and diffusion probabilistic models.
     Current implementation follows described architecture in the paper.
     """
-    def __init__(self, config):
+    def __init__(self):
         super(WaveGradNN, self).__init__()
         # Building upsampling branch (mels -> signal)
+
+        config = ConfigWrapper(**json.loads('{"model_config": {"factors": [5, 5, 3, 2, 2], "upsampling_preconv_out_channels": 768, "upsampling_out_channels": [512, 512, 256, 128, 128], "upsampling_dilations": [[1, 2, 1, 2], [1, 2, 1, 2], [1, 2, 4, 8], [1, 2, 4, 8], [1, 2, 4, 8]], "downsampling_preconv_out_channels": 32, "downsampling_out_channels": [128, 128, 256, 512], "downsampling_dilations": [[1, 2, 4], [1, 2, 4], [1, 2, 4], [1, 2, 4]]}, "data_config": {"sample_rate": 16000, "n_fft": 1024, "win_length": 1024, "hop_length": 300, "f_min": 80.0, "f_max": 8000, "n_mels": 80}, "training_config": {"logdir": "logs/sfx", "continue_training": false, "train_filelist_path": "filelists/train.txt", "test_filelist_path": "filelists/test.txt", "batch_size": 96, "segment_length": 7200, "lr": 0.001, "grad_clip_threshold": 1, "scheduler_step_size": 1, "scheduler_gamma": 0.9, "n_epoch": 100000000, "n_samples_to_test": 4, "test_interval": 10, "use_fp16": true, "training_noise_schedule": {"n_iter": 1000, "betas_range": [1e-06, 0.01]}, "test_noise_schedule": {"n_iter": 50, "betas_range": [1e-06, 0.01]}}, "dist_config": {"MASTER_ADDR": "localhost", "MASTER_PORT": "600010"}}'))
         self.ublock_preconv = Conv1dWithInitialization(
             in_channels=config.data_config.n_mels,
             out_channels=config.model_config.upsampling_preconv_out_channels,
@@ -88,6 +93,7 @@ class WaveGradNN(BaseModule):
             )
         ])
 
+    # @torch.jit.script_method
     def forward(self, mels, yn, noise_level):
         """
         Computes forward pass of neural network.
@@ -102,20 +108,29 @@ class WaveGradNN(BaseModule):
         assert len(yn.shape) == 3  # B, 1, T
 
         # Downsampling stream + Linear Modulation statistics calculation
-        statistics = []
+        scales = []
+        shifts = []
+        #  = torch.jit.annotate(List[Tuple[Tensor, Tensor]], [])
         dblock_outputs = self.dblock_preconv(yn)
         scale, shift = self.films[0](x=dblock_outputs, noise_level=noise_level)
-        statistics.append([scale, shift])
+        # statistics.append([scale, shift])
+        scales.append(scale)
+        shifts.append(shift)
         for dblock, film in zip(self.dblocks, self.films[1:]):
             dblock_outputs = dblock(dblock_outputs)
-            scale, shift = film(x=dblock_outputs, noise_level=noise_level)
-            statistics.append([scale, shift])
-        statistics = statistics[::-1]
-        
+            scale, shift = film.forward(x=dblock_outputs, noise_level=noise_level)
+            # statistics.append([scale, shift])
+            scales.append(scale)
+            shifts.append(shift)
+        # statistics = statistics[::-1]
+        scales = scales[::-1]
+        shifts = shifts[::-1]
+
         # Upsampling stream
         ublock_outputs = self.ublock_preconv(mels)
         for i, ublock in enumerate(self.ublocks):
-            scale, shift = statistics[i]
+            scale = scales[i]
+            shift = shifts[i]
             ublock_outputs = ublock(x=ublock_outputs, scale=scale, shift=shift)
         outputs = self.ublock_postconv(ublock_outputs)
         return outputs.squeeze(1)
