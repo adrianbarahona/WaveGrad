@@ -1,0 +1,13 @@
+name: WaveGrad
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.8
+  - numpy=1.18.5
+  - pytorch=1.7.0=py3.8_cuda11.0.221_cudnn8.0.3_0
+  - cudatoolkit=11.0
+  - torchaudio=0.7.0
+  - tensorboard
+  - librosa
+  - numba<0.50
