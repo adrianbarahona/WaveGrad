@@ -1,3 +1,0 @@
-numpy==1.18.5
-matplotlib>=3.3.1
-tqdm
